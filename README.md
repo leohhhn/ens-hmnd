@@ -1,53 +1,66 @@
-# Humanode ENS demo (offchain subnames via Namespace)
+# Humanode ENS Demo
 
-Next.js app: connect a wallet on Humanode, sign (no gas) to claim `label.<parent>.eth`, resolve it through Sepolia ENS, and send funds on Humanode to the resolved address.
+A small Next.js app showing how a Humanode user could get a human-readable ENS name, with no contracts deployed on Humanode and no gas to claim it. Names are offchain subnames issued through Namespace under a parent ENS name on Sepolia, and they resolve in any ENS-aware client.
+
+## What it demonstrates
+
+1. **Connect.** A wallet is added or switched to Humanode Testnet 5.
+2. **Claim.** The user picks a label (`leon`) and signs a message. Nothing is sent onchain, so claiming costs no gas. The server verifies the signature and issues `leon.<parent>.eth` through Namespace's offchain subnames API.
+3. **Resolve.** The app reads Sepolia ENS the way any dApp would and shows the address records the name returns, plus a debug line (the resolver in use and what Namespace holds for the name).
+4. **Send.** The app sends 0.001 of the native token on Humanode to whatever the name resolved to. This is the only step that needs testnet gas.
+
+The point it makes: Humanode users and dApps get working names today, and the only things ENS or Namespace need to know about Humanode are a chain ID and a coin type.
+
+## How it works
+
+- **ENS stays on Ethereum.** Resolution is an L1 read (Sepolia here), made by the app's server with viem. Humanode only receives the funds. A Humanode dApp therefore needs a mainnet or Sepolia RPC for lookups next to its Humanode RPC.
+- **Names are offchain.** The parent name's resolver on Sepolia is Namespace's Hybrid Resolver. It answers lookups by sending the client to Namespace's gateway (CCIP-Read, EIP-3668), which returns the signed record. The user needs no ENS registration of their own.
+- **Records written per claim.** Each claim stores the user's address under coin 60 (Ethereum) and under the default EVM coin type (`2^31`, ENSIP-19). Humanode is an EVM chain and an ordinary wallet has the same address on every EVM chain, so a client that asks for either one sends to a working address.
+- **Coin types.** A chain's record key is `0x80000000 | chainId` (ENSIP-11): `2147498501` for Testnet 5 and `2147488882` for mainnet.
 
 ## Networks
 
-| | Chain ID | ENS coin type (`2^31 + chainId`) | RPC |
+| | Chain ID | ENS coin type | RPC |
 |---|---|---|---|
 | Humanode Testnet 5 | 14853 (`0x3A05`) | 2147498501 | https://explorer-rpc-http.testnet5.stages.humanode.io |
 | Humanode mainnet | 5234 (`0x1472`) | 2147488882 | https://explorer-rpc-http.mainnet.stages.humanode.io |
 
-Source: https://gitbook.humanode.io/docs/chains.md. The same page lists Testnet 4 with chain ID 5234, which looks like a docs error; use Testnet 5. No EVM block explorer is listed (only Subscan, which is Substrate-side), so check transactions from the wallet or the EVM Playground at https://evm-playground.testnet5.stages.humanode.io.
+Source: https://gitbook.humanode.io/docs/chains.md. The same page lists Testnet 4 with chain ID 5234, which looks like a docs error. No EVM block explorer is listed (only Subscan on the Substrate side); transactions can be checked in the wallet or at https://evm-playground.testnet5.stages.humanode.io.
 
-## Getting testnet gas
+**Testnet gas.** Humanode's docs point to the Telegram faucet bot https://t.me/HumanodeTestnet5FaucetBot (`/gettokens`), which gives testnet HMND. A 2023 Humanode blog post says this must be swapped to the EVM-side token (eHMND); the swap page is https://gitbook.humanode.io/docs/evm/hmnd-ehmnd-swap.md. Faucet limits are not documented, and I did not confirm the swap requirement still applies.
 
-Only step 4 (the send) costs gas. Claiming is a signature, so it needs none.
+## Test results
 
-1. Open the faucet bot https://t.me/HumanodeTestnet5FaucetBot and send `/gettokens`, then follow the prompts.
-2. Humanode's docs (https://gitbook.humanode.io/docs/tools-and-services/testnet-faucets.md) say the faucet gives testnet HMND tokens. A 2023 Humanode blog post says these must be swapped to the EVM-side token (eHMND); the swap page is https://gitbook.humanode.io/docs/evm/hmnd-ehmnd-swap.md. I didn't read that page or confirm it still applies.
-3. Faucet limits and cooldowns are not documented.
+Run against `leon.hmnd-demo.eth` on Sepolia:
 
-## Setup
+| Check | Result |
+|---|---|
+| Resolve coin 60 | Returns the owner's address |
+| Resolve default EVM (`2^31`) | Returns the owner's address |
+| Resolver wiring | Lookups were empty until the parent's resolver was switched to the Hybrid Resolver; afterwards they resolved. The first resolver address in use was the wrong one. |
+| Add a Base address via the SDK, then resolve | Found under the ENSIP-11 coin type (`2147492101`), not under the raw chain ID (`8453`). Namespace converts chain IDs to ENSIP-11 on lookup, so standard clients such as viem find chain records. |
+| Write a Humanode record (`2147498501`) via the REST API | Rejected with 400: `addresses.2.coin is not a valid coin`. Namespace validates against a fixed chain list that doesn't include Humanode. |
+| Humanode-specific record in step 3 | Shows "not set" for the Humanode coin type, as a result |
 
-1. On Sepolia ENS, register your parent name. In the Namespace App (https://app.namespace.ninja/offchain) open it, go to Resolution, click **Update resolver** and **Configure** (one Sepolia transaction). Status should read **Configured**.
-2. Create an API key (Offchain, API Keys), scoped to that parent name.
-3. `cp .env.example .env.local` and fill in `NAMESPACE_API_KEY` and `PARENT_NAME`.
-4. `npm install && npm run dev`, then open http://localhost:3000 with a browser wallet installed.
+## Where it stands
 
-## Deploy to Vercel
+- **Working:** claim, resolution through the offchain resolver, and sending to the resolved address, using the Ethereum and default EVM records.
+- **Missing:** a Humanode-specific record. It matters only in the cases where one address per chain is required, such as a user who wants a different Humanode address, or a smart-contract wallet whose address isn't the same across chains. The remaining step is adding Humanode (chain IDs 5234 and 14853) to Namespace's supported chains, which would also give the SDK a `ChainName` entry.
+- **Not covered:** reverse resolution (address to name), which Namespace's docs say offchain subnames don't support, and proof-of-personhood gating. Humanode's docs list a bioauth status precompile at `0x…0800`, but I haven't confirmed it on the testnet.
+- **Trust model:** Namespace's gateway and API key control the names. They aren't onchain assets.
 
-1. Push this folder to a Git repo and import it in Vercel (framework: Next.js, no build settings to change).
-2. Add the variables from `.env.example` under Settings > Environment Variables. `NAMESPACE_API_KEY` is only read in API routes, so it never reaches the browser.
-3. Deploy. The API key can create names under your parent, so the claim route allows one name per address, but anyone can still use fresh addresses. Keep the deployment link private, or scope the key to the parent name and revoke it after the demo.
+## Not verified end to end
 
-## What gets written for each claim
+- Which testnet token symbol the wallet shows (HMND or eHMND); set by `HUMANODE_SYMBOL`.
+- The one-name-per-address check in the claim route, which uses `getFilteredSubnames({ owner })`, was read from the SDK types but not exercised against the live API.
+- The full signed-claim flow in a browser wallet on Humanode; the resolution and Namespace tests above were run by script.
 
-- Coin 60 (Ethereum) and the Default EVM record, both set to the user's address. A wallet that only asks for coin 60 still sends to a working address, because an EOA has the same address on every EVM chain.
-- Optional, experimental: the Humanode-specific record under coin type `2^31 + chainId`. The SDK's `ChainName` enum has no Humanode entry, so this goes through the REST API, which takes a raw `coin` number. Set `NAMESPACE_REST_URL` to enable it. The request body follows the published OpenAPI spec but is untested here, and it's unconfirmed that the production REST server serves Sepolia names.
+## Layout
 
-## Things to verify (not tested end to end)
-
-- **Coin type convention (found by inspecting the installed SDK).** `ChainName.Default` is `2147483648` (`2^31`, the ENSIP-19 default), but EVM chains in the enum are stored under the *raw chain ID*, not the ENSIP-11 value: Base = `8453` (ENSIP-11 would be `2147492101`), Arbitrum = `42161`, Celo = `42220`, and so on. A client that follows ENSIP-11 (viem `toCoinType`) asks for the larger number, so it may not find those records unless the gateway maps between them. Test this first: claim a name, set a Base address, and resolve it with viem for both `8453` and `2147492101`. Step 3 here shows all four lookups (ENSIP-11, coin 60, default, raw chain ID) for the same reason. The answer decides which number to register for Humanode.
-- Whether the REST route accepts the raw Humanode coin type, and which base URL serves Sepolia. If it doesn't, this is the concrete feature request for the Namespace team.
-- Whether the testnet native token shown in the wallet is HMND or eHMND (`HUMANODE_SYMBOL`).
-- The one-name-per-address check uses `getFilteredSubnames({ owner })` and its `totalItems`; I read the type but haven't called it against the live API.
-
-## Files
-
-- `app/page.js`: the four-step UI (client component, talks to the wallet directly).
-- `app/api/claim/route.js`: verifies the signature, calls `createSubname`.
-- `app/api/resolve/route.js`: viem against Sepolia, returns the four lookups.
-- `app/api/config/route.js`: public chain config for the UI.
-- `lib/config.js`: env parsing, coin type math, the signed message format.
+- `app/page.js`: the four-step UI.
+- `app/api/claim/route.js`: verifies the signature, issues the subname.
+- `app/api/resolve/route.js`: resolves against Sepolia and returns the debug info.
+- `app/api/config/route.js`, `lib/config.js`: chain settings and the signed message format.
+- `scripts/debug-resolve.mjs`: traces one CCIP-Read lookup by hand.
+- `scripts/test-coins.mjs`: the Base and REST coin-type tests.
+- `.env.example`: the server settings (Namespace API key, parent name, RPCs).
