@@ -11,6 +11,16 @@ A small Next.js app showing how a Humanode user could get a human-readable ENS n
 
 The point it makes: Humanode users and dApps get working names today, and the only things ENS or Namespace need to know about Humanode are a chain ID and a coin type.
 
+## One human, one name (Biomapper gate)
+
+With `BIOMAPPER_LOG_ADDRESS` set, the claim route only issues a name to an address that Humanode's Biomapper has linked to a unique verified human in the **current generation**. Biomapper allows one address per human, and the app allows one name per address, so a human gets one name.
+
+- **Check:** two reads on the `BiomapperLog` contract on Humanode: `generationsHead()` (the current generation) then `generationBiomapping(address, head)`, where non-zero means biomapped. A generation is the period in which a mapping is valid; when a new one starts, earlier mappings stop counting.
+- **Fail closed:** if the Humanode RPC call fails, the claim is refused (502), not allowed.
+- **Not verified:** a 403 tells the user to complete the face scan at the Biomapper app first.
+- **Visible result:** verified claims get a `humanode.verified = true` text record on the name, and the generation is stored in the subname's metadata.
+- **Off by default:** leave the address empty and the demo behaves as before.
+
 ## How it works
 
 - **ENS stays on Ethereum.** Resolution is an L1 read (Sepolia here), made by the app's server with viem. Humanode only receives the funds. A Humanode dApp therefore needs a mainnet or Sepolia RPC for lookups next to its Humanode RPC.
@@ -41,12 +51,14 @@ Run against `leon.hmnd-demo.eth` on Sepolia:
 | Add a Base address via the SDK, then resolve | Found under the ENSIP-11 coin type (`2147492101`), not under the raw chain ID (`8453`). Namespace converts chain IDs to ENSIP-11 on lookup, so standard clients such as viem find chain records. |
 | Write a Humanode record (`2147498501`) via the REST API | Rejected with 400: `addresses.2.coin is not a valid coin`. Namespace validates against a fixed chain list that doesn't include Humanode. |
 | Humanode-specific record in step 3 | Shows "not set" for the Humanode coin type, as a result |
+| Biomapper reads on Testnet 5 (`scripts/check-biomapper.mjs`) | `generationsHead()` returned a live generation, and an unmapped address correctly read as not biomapped. A mapped address has not been tested. |
 
 ## Where it stands
 
 - **Working:** claim, resolution through the offchain resolver, and sending to the resolved address, using the Ethereum and default EVM records.
 - **Missing:** a Humanode-specific record. It matters only in the cases where one address per chain is required, such as a user who wants a different Humanode address, or a smart-contract wallet whose address isn't the same across chains. The remaining step is adding Humanode (chain IDs 5234 and 14853) to Namespace's supported chains, which would also give the SDK a `ChainName` entry.
-- **Not covered:** reverse resolution (address to name), which Namespace's docs say offchain subnames don't support, and proof-of-personhood gating. Humanode's docs list a bioauth status precompile at `0x…0800`, but I haven't confirmed it on the testnet.
+- **Open on the Biomapper gate:** a positive case (an address that completed the scan) hasn't been run, so the claim path through to `createSubname` is untested with the gate on. Names also don't expire when a generation changes, so an old name can outlive its verification unless a periodic job revokes it. The `biomapper-sdk` repo's last commit is from October 2025, so ask Humanode whether the contracts are still maintained.
+- **Not covered:** reverse resolution (address to name), which Namespace's docs say offchain subnames don't support.
 - **Trust model:** Namespace's gateway and API key control the names. They aren't onchain assets.
 
 ## Not verified end to end
@@ -61,6 +73,8 @@ Run against `leon.hmnd-demo.eth` on Sepolia:
 - `app/api/claim/route.js`: verifies the signature, issues the subname.
 - `app/api/resolve/route.js`: resolves against Sepolia and returns the debug info.
 - `app/api/config/route.js`, `lib/config.js`: chain settings and the signed message format.
+- `lib/biomapper.js`: the proof-of-personhood check.
+- `scripts/check-biomapper.mjs`: reads Biomapper state for any address.
 - `scripts/debug-resolve.mjs`: traces one CCIP-Read lookup by hand.
 - `scripts/test-coins.mjs`: the Base and REST coin-type tests.
 - `.env.example`: the server settings (Namespace API key, parent name, RPCs).

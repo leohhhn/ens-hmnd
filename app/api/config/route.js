@@ -7,5 +7,6 @@ export async function GET() {
   return Response.json({
     parent: c.parent, chainId: c.chainId, chainIdHex: c.chainIdHex,
     coinType: c.coinType, rpc: c.rpc, symbol: c.symbol,
+    biomapper: c.biomapperLog ? { url: c.biomapperUrl } : null,
   })
 }
