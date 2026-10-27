@@ -1,6 +1,7 @@
 import { isAddress, verifyMessage } from 'viem'
 import { createOffchainClient, ChainName } from '@thenamespace/offchain-manager'
 import { getConfig, claimMessage } from '../../../lib/config'
+import { checkBiomapped } from '../../../lib/biomapper'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
@@ -36,6 +37,19 @@ export async function POST(req) {
     const valid = await verifyMessage({ address, message: claimMessage(label, c.parent, address, issuedAt), signature })
     if (!valid) return fail('Bad signature', 401)
 
+    // Proof of personhood: only addresses biomapped to a unique human in the current generation.
+    let generation = null
+    if (c.biomapperLog) {
+      let check
+      try {
+        check = await checkBiomapped(c, address)
+      } catch (e) {
+        return fail(`Could not check Biomapper: ${e?.shortMessage ?? e?.message ?? e}`, 502) // fail closed
+      }
+      if (!check.ok) return fail(`This address is not verified as a unique human. Verify at ${c.biomapperUrl} first.`, 403)
+      generation = check.generation
+    }
+
     const ns = createOffchainClient({ mode: 'sepolia', timeout: 10000, defaultApiKey: c.apiKey })
     const name = `${label}.${c.parent}`
     const { isAvailable } = await ns.isSubnameAvailable(name)
@@ -56,8 +70,14 @@ export async function POST(req) {
         { chain: ChainName.Ethereum, value: address },
         { chain: ChainName.Default, value: address },
       ],
-      texts: [{ key: 'description', value: 'Claimed via Humanode ENS demo' }],
-      metadata: [{ key: 'sender', value: address }],
+      texts: [
+        { key: 'description', value: 'Claimed via Humanode ENS demo' },
+        ...(generation !== null ? [{ key: 'humanode.verified', value: 'true' }] : []),
+      ],
+      metadata: [
+        { key: 'sender', value: address },
+        ...(generation !== null ? [{ key: 'biomapper_generation', value: String(generation) }] : []),
+      ],
     })
     return Response.json({ name, rawCoinRecord: await writeRawCoinRecord(c, label, address) })
   } catch (e) {

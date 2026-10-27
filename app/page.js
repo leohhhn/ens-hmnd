@@ -20,10 +20,24 @@ export default function Page() {
   const [claim, setClaim] = useState(null)
   const [resolved, setResolved] = useState(null)
   const [sent, setSent] = useState(null)
+  const [human, setHuman] = useState(null) // Biomapper status: { text, cls, verified }
 
   useEffect(() => {
     fetch('/api/config').then((r) => r.json()).then(setCfg)
   }, [])
+
+  async function checkHuman(addr) {
+    setHuman({ text: 'Checking Biomapper...' })
+    try {
+      const j = await (await fetch('/api/biomapper?address=' + addr)).json()
+      if (j.error) return setHuman({ text: j.error, cls: 'bad' })
+      setHuman(j.verified
+        ? { text: `Verified unique human (generation ${j.generation})`, cls: 'ok', verified: true }
+        : { text: 'Not verified as a unique human yet', cls: 'bad', verified: false })
+    } catch (e) {
+      setHuman({ text: e.message || String(e), cls: 'bad' })
+    }
+  }
 
   async function connect() {
     if (!window.ethereum) return setWallet({ text: 'No browser wallet found', cls: 'bad' })
@@ -43,6 +57,7 @@ export default function Page() {
         })
       }
       setAccount(addr)
+      if (cfg.biomapper) checkHuman(addr)
       setWallet({ text: `Connected ${addr}\nChain ${cfg.chainId} (${cfg.chainIdHex})\nENS coin type ${cfg.coinType}`, cls: 'ok' })
     } catch (e) {
       setWallet({ text: e.message || String(e), cls: 'bad' })
@@ -119,11 +134,24 @@ export default function Page() {
 
       <section>
         <h2>2. Claim a name (no gas, just a signature)</h2>
+        {cfg?.biomapper && (
+          <>
+            <p className="muted">Claims are limited to verified unique humans (Humanode Biomapper).</p>
+            {account && <Out o={human} />}
+            {account && human && !human.verified && (
+              <p className="muted">
+                <a href={cfg.biomapper.url} target="_blank" rel="noreferrer">Verify at {cfg.biomapper.url.replace('https://', '')}</a>
+                , then{' '}
+                <button type="button" onClick={() => checkHuman(account)}>Check again</button>
+              </p>
+            )}
+          </>
+        )}
         <div className="row">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="alice" autoComplete="off" />
           <span className="suffix">.{cfg?.parent}</span>
         </div>
-        <button onClick={doClaim} disabled={!account}>Sign and claim</button>
+        <button onClick={doClaim} disabled={!account || (cfg?.biomapper && !human?.verified)}>Sign and claim</button>
         <Out o={claim} />
       </section>
 
