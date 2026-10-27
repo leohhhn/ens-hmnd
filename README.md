@@ -57,10 +57,14 @@ Run against `leon.hmnd-demo.eth` on Sepolia:
 
 ## Layout
 
-- `app/page.js`: the four-step UI.
-- `app/api/claim/route.js`: verifies the signature, issues the subname.
-- `app/api/resolve/route.js`: resolves against Sepolia and returns the debug info.
-- `app/api/config/route.js`, `lib/config.js`: chain settings and the signed message format.
-- `scripts/debug-resolve.mjs`: traces one CCIP-Read lookup by hand.
-- `scripts/test-coins.mjs`: the Base and REST coin-type tests.
+Everything is TypeScript (`strict`), type-checked with `npm run typecheck`.
+
+- `app/page.tsx`: the four-step UI.
+- `app/api/claim/route.ts`: verifies the signature, issues the subname.
+- `app/api/resolve/route.ts`: resolves against Sepolia and returns the debug info.
+- `app/api/config/route.ts`, `lib/config.ts`: chain settings.
+- `lib/message.ts`, `lib/types.ts`, `lib/errors.ts`: the signed message format (shared by the page and the claim route), the request and response types, and error text.
+- `global.d.ts`: types for the browser wallet (`window.ethereum`).
+- `scripts/debug-resolve.mts` (`npm run debug:resolve`): traces one CCIP-Read lookup by hand.
+- `scripts/test-coins.mts` (`npm run test:coins`): the Base and REST coin-type tests.
 - `.env.example`: the server settings (Namespace API key, parent name, RPCs).

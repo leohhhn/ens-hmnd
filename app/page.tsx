@@ -1,38 +1,52 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { claimMessage } from '../lib/message'
+import type { ApiError, ClaimResponse, PublicConfig, ResolveResponse } from '../lib/types'
 
-const isAddr = (v) => typeof v === 'string' && /^0x[0-9a-fA-F]{40}$/.test(v)
-const claimMessage = (label, parent, address, issuedAt) =>
-  `Claim ${label}.${parent}\nAddress: ${address}\nIssued: ${issuedAt}`
+interface Status {
+  text: string
+  cls?: 'ok' | 'bad'
+}
 
-function Out({ o }) {
+const isAddr = (v: string): boolean => /^0x[0-9a-fA-F]{40}$/.test(v)
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e))
+
+function provider(): EthereumProvider {
+  if (!window.ethereum) throw new Error('No browser wallet found')
+  return window.ethereum
+}
+
+function Out({ o }: { o: Status | null }) {
   return o ? <pre className={o.cls}>{o.text}</pre> : null
 }
 
 export default function Page() {
-  const [cfg, setCfg] = useState(null)
-  const [account, setAccount] = useState(null)
+  const [cfg, setCfg] = useState<PublicConfig | null>(null)
+  const [account, setAccount] = useState<string | null>(null)
   const [label, setLabel] = useState('')
   const [name, setName] = useState('')
-  const [target, setTarget] = useState(null)
-  const [wallet, setWallet] = useState({ text: 'Not connected' })
-  const [claim, setClaim] = useState(null)
-  const [resolved, setResolved] = useState(null)
-  const [sent, setSent] = useState(null)
+  const [target, setTarget] = useState<string | null>(null)
+  const [wallet, setWallet] = useState<Status>({ text: 'Not connected' })
+  const [claim, setClaim] = useState<Status | null>(null)
+  const [resolved, setResolved] = useState<Status | null>(null)
+  const [sent, setSent] = useState<Status | null>(null)
 
   useEffect(() => {
-    fetch('/api/config').then((r) => r.json()).then(setCfg)
+    fetch('/api/config')
+      .then((r) => r.json() as Promise<PublicConfig>)
+      .then(setCfg)
   }, [])
 
   async function connect() {
-    if (!window.ethereum) return setWallet({ text: 'No browser wallet found', cls: 'bad' })
+    if (!cfg) return
     try {
-      const [addr] = await window.ethereum.request({ method: 'eth_requestAccounts' })
+      const eth = provider()
+      const [addr] = (await eth.request({ method: 'eth_requestAccounts' })) as string[]
       try {
-        await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: cfg.chainIdHex }] })
+        await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: cfg.chainIdHex }] })
       } catch {
-        await window.ethereum.request({
+        await eth.request({
           method: 'wallet_addEthereumChain',
           params: [{
             chainId: cfg.chainIdHex,
@@ -45,31 +59,32 @@ export default function Page() {
       setAccount(addr)
       setWallet({ text: `Connected ${addr}\nChain ${cfg.chainId} (${cfg.chainIdHex})\nENS coin type ${cfg.coinType}`, cls: 'ok' })
     } catch (e) {
-      setWallet({ text: e.message || String(e), cls: 'bad' })
+      setWallet({ text: errText(e), cls: 'bad' })
     }
   }
 
   async function doClaim() {
+    if (!cfg?.parent || !account) return
     const l = label.trim().toLowerCase()
     if (!l) return setClaim({ text: 'Enter a label', cls: 'bad' })
     const issuedAt = Date.now()
     try {
       setClaim({ text: 'Waiting for signature...' })
-      const signature = await window.ethereum.request({
+      const signature = (await provider().request({
         method: 'personal_sign',
         params: [claimMessage(l, cfg.parent, account, issuedAt), account],
-      })
+      })) as string
       const r = await fetch('/api/claim', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ label: l, address: account, signature, issuedAt }),
       })
-      const j = await r.json()
-      if (!r.ok) return setClaim({ text: j.error, cls: 'bad' })
+      const j = (await r.json()) as ClaimResponse | ApiError
+      if ('error' in j) return setClaim({ text: j.error, cls: 'bad' })
       setClaim({ text: `Claimed ${j.name}\nRaw coin record: ${j.rawCoinRecord}`, cls: 'ok' })
       setName(j.name)
     } catch (e) {
-      setClaim({ text: e.message || String(e), cls: 'bad' })
+      setClaim({ text: errText(e), cls: 'bad' })
     }
   }
 
@@ -77,8 +92,8 @@ export default function Page() {
     const n = name.trim().toLowerCase()
     if (!n) return
     setResolved({ text: 'Resolving...' })
-    const j = await (await fetch('/api/resolve?name=' + encodeURIComponent(n))).json()
-    if (j.error) return setResolved({ text: j.error, cls: 'bad' })
+    const j = (await (await fetch('/api/resolve?name=' + encodeURIComponent(n))).json()) as ResolveResponse | ApiError
+    if ('error' in j) return setResolved({ text: j.error, cls: 'bad' })
     setResolved({
       text:
         `${j.name}\n` +
@@ -91,18 +106,19 @@ export default function Page() {
         `In Namespace: ${JSON.stringify(j.debug.namespace)}`,
     })
     // Prefer the chain-specific record; fall back to coin 60 (same EOA key works on every EVM chain).
-    setTarget([j.humanode, j.ethereum, j.default].find(isAddr) || null)
+    setTarget([j.humanode, j.ethereum, j.default].find(isAddr) ?? null)
   }
 
   async function doSend() {
+    if (!target || !account) return
     try {
-      const hash = await window.ethereum.request({
+      const hash = await provider().request({
         method: 'eth_sendTransaction',
         params: [{ from: account, to: target, value: '0x38D7EA4C68000' }], // 0.001 * 1e18
       })
-      setSent({ text: `Sent to ${target}\ntx ${hash}`, cls: 'ok' })
+      setSent({ text: `Sent to ${target}\ntx ${String(hash)}`, cls: 'ok' })
     } catch (e) {
-      setSent({ text: e.message || String(e), cls: 'bad' })
+      setSent({ text: errText(e), cls: 'bad' })
     }
   }
 

@@ -1,36 +1,47 @@
-import { isAddress, verifyMessage } from 'viem'
+import { isAddress, isHex, verifyMessage } from 'viem'
 import { createOffchainClient, ChainName } from '@thenamespace/offchain-manager'
-import { getConfig, claimMessage } from '../../../lib/config'
+import { getConfig, type Config } from '../../../lib/config'
+import { claimMessage } from '../../../lib/message'
+import { errMsg } from '../../../lib/errors'
+import type { ApiError, ClaimRequest, ClaimResponse } from '../../../lib/types'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 // Experimental: the SDK only takes ChainName values, the REST API takes a raw `coin` number.
 // Field names follow the published OpenAPI spec; unverified for this endpoint.
-async function writeRawCoinRecord(c, label, address) {
+async function writeRawCoinRecord(c: Config, label: string, address: string): Promise<string> {
   if (!c.restUrl) return 'skipped'
   const r = await fetch(`${c.restUrl}/api/v1/subnames`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-auth-token': c.apiKey },
+    headers: { 'content-type': 'application/json', 'x-auth-token': c.apiKey ?? '' },
     body: JSON.stringify({
-      parentName: c.parent, label, owner: address,
+      parentName: c.parent,
+      label,
+      owner: address,
       addresses: [{ coin: c.coinType, value: address }],
     }),
   })
   return r.ok ? 'ok' : `failed (${r.status}): ${await r.text()}`
 }
 
-export async function POST(req) {
+const fail = (error: string, status: number) => Response.json({ error } satisfies ApiError, { status })
+
+export async function POST(req: Request) {
   const c = getConfig()
-  if (!c.apiKey || !c.parent) return Response.json({ error: 'Server not configured' }, { status: 500 })
-  const fail = (error, status) => Response.json({ error }, { status })
+  if (!c.apiKey || !c.parent) return fail('Server not configured', 500)
 
   try {
-    const { label, address, signature, issuedAt } = await req.json()
+    const { label, address, signature, issuedAt } = (await req.json()) as Partial<ClaimRequest>
+
     if (typeof label !== 'string' || !/^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/.test(label))
       return fail('Label: 3-32 chars, a-z 0-9 and hyphens, no leading/trailing hyphen', 400)
-    if (!isAddress(address)) return fail('Invalid address', 400)
-    if (typeof signature !== 'string' || !Number.isFinite(issuedAt) || Math.abs(Date.now() - issuedAt) > 5 * 60_000)
+    if (typeof address !== 'string' || !isAddress(address)) return fail('Invalid address', 400)
+    if (
+      typeof signature !== 'string' || !isHex(signature) ||
+      typeof issuedAt !== 'number' || !Number.isFinite(issuedAt) ||
+      Math.abs(Date.now() - issuedAt) > 5 * 60_000
+    )
       return fail('Missing signature or stale request', 400)
 
     const valid = await verifyMessage({ address, message: claimMessage(label, c.parent, address, issuedAt), signature })
@@ -59,9 +70,9 @@ export async function POST(req) {
       texts: [{ key: 'description', value: 'Claimed via Humanode ENS demo' }],
       metadata: [{ key: 'sender', value: address }],
     })
-    return Response.json({ name, rawCoinRecord: await writeRawCoinRecord(c, label, address) })
+    return Response.json({ name, rawCoinRecord: await writeRawCoinRecord(c, label, address) } satisfies ClaimResponse)
   } catch (e) {
     console.error(e)
-    return fail(String(e?.message ?? e), 500)
+    return fail(errMsg(e), 500)
   }
 }
