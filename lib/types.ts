@@ -2,6 +2,7 @@
 
 export interface PublicConfig {
   parent: string | undefined
+  productionParent: string
   chainId: number
   chainIdHex: `0x${string}`
   coinType: number
@@ -18,23 +19,14 @@ export interface ClaimRequest {
 
 export interface ClaimResponse {
   name: string
-  rawCoinRecord: string
-}
-
-export interface ResolveDebug {
-  resolver: string
-  namespace: { owner?: string; addresses: Record<string, string> } | string
 }
 
 export interface ResolveResponse {
   name: string
   coinType: number
-  chainId: number
   humanode: string
   ethereum: string
   default: string
-  rawChainId: string
-  debug: ResolveDebug
 }
 
 export interface ApiError {
